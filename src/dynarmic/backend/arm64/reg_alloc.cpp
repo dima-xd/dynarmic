@@ -145,7 +145,7 @@ bool RegAlloc::WasValueDefined(IR::Inst* inst) const {
 }
 
 void RegAlloc::PrepareForCall(std::optional<Argument::copyable_reference> arg0, std::optional<Argument::copyable_reference> arg1, std::optional<Argument::copyable_reference> arg2, std::optional<Argument::copyable_reference> arg3) {
-    fpsr_manager.Spill();
+    fpsr_manager.SaveForCall();
     SpillFlags();
 
     // TODO: Spill into callee-save registers

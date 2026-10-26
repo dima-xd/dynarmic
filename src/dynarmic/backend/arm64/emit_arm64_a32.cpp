@@ -654,7 +654,7 @@ template<>
 void EmitIR<IR::Opcode::A32GetFpscr>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
     auto Wfpscr = ctx.reg_alloc.WriteW(inst);
     RegAlloc::Realize(Wfpscr);
-    ctx.fpsr.Spill();
+    ctx.fpsr.SaveForCall();
 
     static_assert(offsetof(A32JitState, fpsr) + sizeof(u32) == offsetof(A32JitState, fpsr_nzcv));
 
@@ -685,6 +685,8 @@ void EmitIR<IR::Opcode::A32SetFpscr>(oaknut::CodeGenerator& code, EmitContext& c
     code.AND(Wscratch0, Wfpscr, Wscratch0);
     code.AND(Wscratch1, Wfpscr, 0xf000'0000);
     code.STP(Wscratch0, Wscratch1, Xstate, offsetof(A32JitState, fpsr));
+    // The host FPSR is authoritative during a run, so track the write.
+    code.MSR(oaknut::SystemReg::FPSR, Xscratch0);
 }
 
 template<>

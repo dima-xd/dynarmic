@@ -98,15 +98,24 @@ bool TranslatorVisitor::v8_VST_multiple(bool D, Reg n, size_t Vd, Imm<4> type, s
     const bool register_index = m != Reg::R15 && m != Reg::R13;
 
     IR::U32 address = ir.GetRegister(n);
-    for (size_t r = 0; r < regs; r++) {
-        for (size_t e = 0; e < elements; e++) {
-            for (size_t i = 0; i < nelem; i++) {
-                const ExtReg ext_reg = d + i * inc + r;
-                const IR::U64 shifted_element = ir.LogicalShiftRight(ir.GetExtendedRegister(ext_reg), ir.Imm8(static_cast<u8>(e * ebytes * 8)));
-                const IR::UAny element = ir.LeastSignificant(8 * ebytes, shifted_element);
-                ir.WriteMemory(8 * ebytes, address, element, IR::AccType::NORMAL);
+    if (nelem == 1) {
+        // A single structure is 8 contiguous bytes per register, so one 64-bit
+        // store replaces 8/ebytes element stores plus the shift chain.
+        for (size_t r = 0; r < regs; r++) {
+            ir.WriteMemory(64, address, ir.GetExtendedRegister(d + r), IR::AccType::NORMAL);
+            address = ir.Add(address, ir.Imm32(8));
+        }
+    } else {
+        for (size_t r = 0; r < regs; r++) {
+            for (size_t e = 0; e < elements; e++) {
+                for (size_t i = 0; i < nelem; i++) {
+                    const ExtReg ext_reg = d + i * inc + r;
+                    const IR::U64 shifted_element = ir.LogicalShiftRight(ir.GetExtendedRegister(ext_reg), ir.Imm8(static_cast<u8>(e * ebytes * 8)));
+                    const IR::UAny element = ir.LeastSignificant(8 * ebytes, shifted_element);
+                    ir.WriteMemory(8 * ebytes, address, element, IR::AccType::NORMAL);
 
-                address = ir.Add(address, ir.Imm32(static_cast<u32>(ebytes)));
+                    address = ir.Add(address, ir.Imm32(static_cast<u32>(ebytes)));
+                }
             }
         }
     }
@@ -149,21 +158,30 @@ bool TranslatorVisitor::v8_VLD_multiple(bool D, Reg n, size_t Vd, Imm<4> type, s
     for (size_t r = 0; r < regs; r++) {
         for (size_t i = 0; i < nelem; i++) {
             const ExtReg ext_reg = d + i * inc + r;
-            ir.SetExtendedRegister(ext_reg, ir.Imm64(0));
+            if (nelem != 1) {
+                ir.SetExtendedRegister(ext_reg, ir.Imm64(0));
+            }
         }
     }
 
     IR::U32 address = ir.GetRegister(n);
-    for (size_t r = 0; r < regs; r++) {
-        for (size_t e = 0; e < elements; e++) {
-            for (size_t i = 0; i < nelem; i++) {
-                const IR::U64 element = ir.ZeroExtendToLong(ir.ReadMemory(ebytes * 8, address, IR::AccType::NORMAL));
-                const IR::U64 shifted_element = ir.LogicalShiftLeft(element, ir.Imm8(static_cast<u8>(e * ebytes * 8)));
+    if (nelem == 1) {
+        for (size_t r = 0; r < regs; r++) {
+            ir.SetExtendedRegister(d + r, ir.ReadMemory(64, address, IR::AccType::NORMAL));
+            address = ir.Add(address, ir.Imm32(8));
+        }
+    } else {
+        for (size_t r = 0; r < regs; r++) {
+            for (size_t e = 0; e < elements; e++) {
+                for (size_t i = 0; i < nelem; i++) {
+                    const IR::U64 element = ir.ZeroExtendToLong(ir.ReadMemory(ebytes * 8, address, IR::AccType::NORMAL));
+                    const IR::U64 shifted_element = ir.LogicalShiftLeft(element, ir.Imm8(static_cast<u8>(e * ebytes * 8)));
 
-                const ExtReg ext_reg = d + i * inc + r;
-                ir.SetExtendedRegister(ext_reg, ir.Or(ir.GetExtendedRegister(ext_reg), shifted_element));
+                    const ExtReg ext_reg = d + i * inc + r;
+                    ir.SetExtendedRegister(ext_reg, ir.Or(ir.GetExtendedRegister(ext_reg), shifted_element));
 
-                address = ir.Add(address, ir.Imm32(static_cast<u32>(ebytes)));
+                    address = ir.Add(address, ir.Imm32(static_cast<u32>(ebytes)));
+                }
             }
         }
     }

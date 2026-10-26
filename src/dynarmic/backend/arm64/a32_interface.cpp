@@ -21,6 +21,31 @@ namespace Dynarmic::A32 {
 
 using namespace Backend::Arm64;
 
+namespace {
+
+// Guest FP flag bits (QC and the cumulative exception flags) live in the host
+// FPSR for the whole run; FpsrManager defers spilling them to the run
+// boundaries so that FP-heavy blocks do not pay a system-register round trip.
+constexpr u32 kFpsrFlagMask = 0x0800'009f;
+
+u32 ReadHostFpsr() {
+#if defined(__aarch64__)
+    u64 value;
+    __asm__ volatile("mrs %0, fpsr" : "=r"(value));
+    return static_cast<u32>(value);
+#else
+    return 0;
+#endif
+}
+
+void WriteHostFpsr(u32 value) {
+#if defined(__aarch64__)
+    __asm__ volatile("msr fpsr, %0" ::"r"(static_cast<u64>(value)));
+#endif
+}
+
+}  // namespace
+
 struct Jit::Impl final {
     Impl(Jit* jit_interface, A32::UserConfig conf)
             : jit_interface(jit_interface)
@@ -37,6 +62,13 @@ struct Jit::Impl final {
             jit_interface->is_executing = false;
         };
 
+        const u32 saved_host_fpsr = ReadHostFpsr();
+        WriteHostFpsr(current_state.fpsr & kFpsrFlagMask);
+        SCOPE_EXIT {
+            current_state.fpsr = ReadHostFpsr() & kFpsrFlagMask;
+            WriteHostFpsr(saved_host_fpsr);
+        };
+
         HaltReason hr = core.Run(current_address_space, current_state, &halt_reason);
 
         PerformRequestedCacheInvalidation(hr);
@@ -51,6 +83,13 @@ struct Jit::Impl final {
         jit_interface->is_executing = true;
         SCOPE_EXIT {
             jit_interface->is_executing = false;
+        };
+
+        const u32 saved_host_fpsr = ReadHostFpsr();
+        WriteHostFpsr(current_state.fpsr & kFpsrFlagMask);
+        SCOPE_EXIT {
+            current_state.fpsr = ReadHostFpsr() & kFpsrFlagMask;
+            WriteHostFpsr(saved_host_fpsr);
         };
 
         HaltReason hr = core.Step(current_address_space, current_state, &halt_reason);

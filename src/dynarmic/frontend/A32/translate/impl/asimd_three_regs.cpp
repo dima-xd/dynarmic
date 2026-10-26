@@ -241,6 +241,47 @@ bool WideInstruction(TranslatorVisitor& v, bool U, bool D, size_t sz, size_t Vn,
     return true;
 }
 
+// VADDHN/VSUBHN and their rounding forms: two Q registers are added (or
+// subtracted) as double-width lanes and the high half of every result is packed
+// into a D register. The size field names the wide element, so .I16 works on
+// 32-bit operands and yields 16-bit lanes.
+enum class NarrowBehavior {
+    Truncate,
+    Round,
+};
+
+bool HighNarrow(TranslatorVisitor& v, bool subtract, NarrowBehavior behavior, bool D, size_t sz, size_t Vn, size_t Vd, bool N, bool M, size_t Vm) {
+    // .I64 would need a 128-bit adder; the IR tops out at 64-bit lanes and no
+    // compiler emits this form, so refuse it rather than compute nonsense.
+    // sz == 0b11 is the architecturally undefined encoding.
+    if (sz >= 0b10) {
+        return v.DecodeError();
+    }
+
+    const size_t wide_esize = 32U << sz;
+    const size_t esize = wide_esize / 2;
+
+    const auto d = ToVector(false, Vd, D);
+    const auto m = ToVector(true, Vm, M);
+    const auto n = ToVector(true, Vn, N);
+
+    const auto reg_m = v.ir.GetVector(m);
+    const auto reg_n = v.ir.GetVector(n);
+    auto wide = subtract ? v.ir.VectorSub(wide_esize, reg_n, reg_m)
+                         : v.ir.VectorAdd(wide_esize, reg_n, reg_m);
+    if (behavior == NarrowBehavior::Round) {
+        const u64 half = u64{1} << (esize - 1);
+        const IR::U128 round = wide_esize == 32
+                                   ? v.ir.VectorBroadcast(32, v.ir.Imm32(static_cast<u32>(half)))
+                                   : v.ir.VectorBroadcast(64, v.ir.Imm64(half));
+        wide = v.ir.VectorAdd(wide_esize, wide, round);
+    }
+
+    const auto shifted = v.ir.VectorLogicalShiftRight(wide_esize, wide, static_cast<u8>(esize));
+    v.ir.SetVector(d, v.ir.VectorNarrow(wide_esize, shifted));
+    return true;
+}
+
 }  // Anonymous namespace
 
 // ASIMD Three registers of the same length
@@ -909,6 +950,22 @@ bool TranslatorVisitor::asimd_VSUBL(bool U, bool D, size_t sz, size_t Vn, size_t
     return WideInstruction(*this, U, D, sz, Vn, Vd, N, M, Vm, op ? WidenBehaviour::Second : WidenBehaviour::Both, [this](size_t esize, const auto&, const auto& reg_n, const auto& reg_m) {
         return ir.VectorSub(esize, reg_n, reg_m);
     });
+}
+
+bool TranslatorVisitor::asimd_VADDHN(bool D, size_t sz, size_t Vn, size_t Vd, bool N, bool M, size_t Vm) {
+    return HighNarrow(*this, false, NarrowBehavior::Truncate, D, sz, Vn, Vd, N, M, Vm);
+}
+
+bool TranslatorVisitor::asimd_VRADDHN(bool D, size_t sz, size_t Vn, size_t Vd, bool N, bool M, size_t Vm) {
+    return HighNarrow(*this, false, NarrowBehavior::Round, D, sz, Vn, Vd, N, M, Vm);
+}
+
+bool TranslatorVisitor::asimd_VSUBHN(bool D, size_t sz, size_t Vn, size_t Vd, bool N, bool M, size_t Vm) {
+    return HighNarrow(*this, true, NarrowBehavior::Truncate, D, sz, Vn, Vd, N, M, Vm);
+}
+
+bool TranslatorVisitor::asimd_VRSUBHN(bool D, size_t sz, size_t Vn, size_t Vd, bool N, bool M, size_t Vm) {
+    return HighNarrow(*this, true, NarrowBehavior::Round, D, sz, Vn, Vd, N, M, Vm);
 }
 
 bool TranslatorVisitor::asimd_VABAL(bool U, bool D, size_t sz, size_t Vn, size_t Vd, bool N, bool M, size_t Vm) {

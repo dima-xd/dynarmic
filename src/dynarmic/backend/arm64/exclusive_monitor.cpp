@@ -29,17 +29,22 @@ void ExclusiveMonitor::Unlock() {
 bool ExclusiveMonitor::CheckAndClear(size_t processor_id, VAddr address) {
     const VAddr masked_address = address & RESERVATION_GRANULE_MASK;
 
-    Lock();
-    if (exclusive_addresses[processor_id] != masked_address) {
-        Unlock();
+    // Only this processor's own slot is examined. Invalidating every other
+    // processor's reservation - and taking a process-wide lock to do it - is
+    // how upstream models a store to the granule, but the host's
+    // MemoryWriteExclusive* callbacks already perform that store as an atomic
+    // compare-exchange of the guest word, so a reservation that should be lost
+    // fails there instead. What is left for the monitor is the part the guest
+    // cannot get from a compare-exchange: a store with no matching load of the
+    // same address has to fail.
+    const VAddr reserved =
+        __atomic_load_n(&exclusive_addresses[processor_id], __ATOMIC_RELAXED);
+    if (reserved != masked_address) {
         return false;
     }
 
-    for (VAddr& other_address : exclusive_addresses) {
-        if (other_address == masked_address) {
-            other_address = INVALID_EXCLUSIVE_ADDRESS;
-        }
-    }
+    __atomic_store_n(&exclusive_addresses[processor_id], INVALID_EXCLUSIVE_ADDRESS,
+                     __ATOMIC_RELAXED);
     return true;
 }
 

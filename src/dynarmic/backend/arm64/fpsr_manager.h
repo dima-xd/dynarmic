@@ -19,6 +19,7 @@ public:
     explicit FpsrManager(oaknut::CodeGenerator& code, size_t state_fpsr_offset);
 
     void Spill();
+    void SaveForCall();
     void Load();
     void Overwrite() { fpsr_loaded = false; }
 
