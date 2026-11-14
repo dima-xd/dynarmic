@@ -138,6 +138,14 @@ void CallbackOnlyEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, I
     if (ordered) {
         code.DMB(oaknut::BarrierOp::ISH);
     }
+    // A callback that cannot serve the access aborts the run here, with the
+    // pc still on the instruction, so the fault is reported where it happened
+    // instead of at the end of the block.
+    if (ctx.conf.check_halt_on_memory_access) {
+        oaknut::Label end;
+        ctx.conf.emit_check_memory_abort(code, ctx, inst, end);
+        code.l(end);
+    }
 
     if constexpr (bitsize == 128) {
         code.MOV(Q8.B16(), Q0.B16());
@@ -158,6 +166,11 @@ void CallbackOnlyEmitExclusiveReadMemory(oaknut::CodeGenerator& code, EmitContex
     EmitRelocation(code, ctx, ExclusiveReadMemoryLinkTarget(bitsize));
     if (ordered) {
         code.DMB(oaknut::BarrierOp::ISH);
+    }
+    if (ctx.conf.check_halt_on_memory_access) {
+        oaknut::Label end;
+        ctx.conf.emit_check_memory_abort(code, ctx, inst, end);
+        code.l(end);
     }
 
     if constexpr (bitsize == 128) {
@@ -181,6 +194,11 @@ void CallbackOnlyEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, 
     if (ordered) {
         code.DMB(oaknut::BarrierOp::ISH);
     }
+    if (ctx.conf.check_halt_on_memory_access) {
+        oaknut::Label end;
+        ctx.conf.emit_check_memory_abort(code, ctx, inst, end);
+        code.l(end);
+    }
 }
 
 template<size_t bitsize>
@@ -201,6 +219,9 @@ void CallbackOnlyEmitExclusiveWriteMemory(oaknut::CodeGenerator& code, EmitConte
     EmitRelocation(code, ctx, ExclusiveWriteMemoryLinkTarget(bitsize));
     if (ordered) {
         code.DMB(oaknut::BarrierOp::ISH);
+    }
+    if (ctx.conf.check_halt_on_memory_access) {
+        ctx.conf.emit_check_memory_abort(code, ctx, inst, end);
     }
     code.l(end);
     ctx.reg_alloc.DefineAsRegister(inst, X0);
