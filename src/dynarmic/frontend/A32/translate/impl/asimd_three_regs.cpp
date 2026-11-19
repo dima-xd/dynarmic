@@ -242,24 +242,27 @@ bool WideInstruction(TranslatorVisitor& v, bool U, bool D, size_t sz, size_t Vn,
 }
 
 // VADDHN/VSUBHN and their rounding forms: two Q registers are added (or
-// subtracted) as double-width lanes and the high half of every result is packed
-// into a D register. The size field names the wide element, so .I16 works on
-// 32-bit operands and yields 16-bit lanes.
+// subtracted) as one size wider than the result, the high half of every sum is
+// taken and the results are packed into a D register. The size field names the
+// *result* element, so .I16 adds 16-bit lanes and yields 8-bit ones; reading it
+// as the operand width adds a size too much and rejects .I64, which is a valid
+// encoding the IR can do (two 64-bit lanes).
 enum class NarrowBehavior {
     Truncate,
     Round,
 };
 
 bool HighNarrow(TranslatorVisitor& v, bool subtract, NarrowBehavior behavior, bool D, size_t sz, size_t Vn, size_t Vd, bool N, bool M, size_t Vm) {
-    // .I64 would need a 128-bit adder; the IR tops out at 64-bit lanes and no
-    // compiler emits this form, so refuse it rather than compute nonsense.
-    // sz == 0b11 is the architecturally undefined encoding.
-    if (sz >= 0b10) {
+    if (sz == 0b11) {
         return v.DecodeError();
     }
+    // The sources are Q registers: an odd register number is not encoded here.
+    if (mcl::bit::get_bit<0>(Vn) || mcl::bit::get_bit<0>(Vm)) {
+        return v.UndefinedInstruction();
+    }
 
-    const size_t wide_esize = 32U << sz;
-    const size_t esize = wide_esize / 2;
+    const size_t esize = 8U << sz;
+    const size_t source_esize = esize * 2;
 
     const auto d = ToVector(false, Vd, D);
     const auto m = ToVector(true, Vm, M);
@@ -267,18 +270,27 @@ bool HighNarrow(TranslatorVisitor& v, bool subtract, NarrowBehavior behavior, bo
 
     const auto reg_m = v.ir.GetVector(m);
     const auto reg_n = v.ir.GetVector(n);
-    auto wide = subtract ? v.ir.VectorSub(wide_esize, reg_n, reg_m)
-                         : v.ir.VectorAdd(wide_esize, reg_n, reg_m);
+    auto wide = subtract ? v.ir.VectorSub(source_esize, reg_n, reg_m)
+                         : v.ir.VectorAdd(source_esize, reg_n, reg_m);
     if (behavior == NarrowBehavior::Round) {
         const u64 half = u64{1} << (esize - 1);
-        const IR::U128 round = wide_esize == 32
-                                   ? v.ir.VectorBroadcast(32, v.ir.Imm32(static_cast<u32>(half)))
-                                   : v.ir.VectorBroadcast(64, v.ir.Imm64(half));
-        wide = v.ir.VectorAdd(wide_esize, wide, round);
+        IR::U128 round;
+        switch (source_esize) {
+        case 16:
+            round = v.ir.VectorBroadcast(16, v.ir.Imm16(static_cast<u16>(half)));
+            break;
+        case 32:
+            round = v.ir.VectorBroadcast(32, v.ir.Imm32(static_cast<u32>(half)));
+            break;
+        default:
+            round = v.ir.VectorBroadcast(64, v.ir.Imm64(half));
+            break;
+        }
+        wide = v.ir.VectorAdd(source_esize, wide, round);
     }
 
-    const auto shifted = v.ir.VectorLogicalShiftRight(wide_esize, wide, static_cast<u8>(esize));
-    v.ir.SetVector(d, v.ir.VectorNarrow(wide_esize, shifted));
+    const auto shifted = v.ir.VectorLogicalShiftRight(source_esize, wide, static_cast<u8>(esize));
+    v.ir.SetVector(d, v.ir.VectorNarrow(source_esize, shifted));
     return true;
 }
 

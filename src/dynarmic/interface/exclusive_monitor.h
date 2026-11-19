@@ -40,6 +40,11 @@ public:
         // record what this processor read. See CheckAndClear() for why no other
         // processor's slot has to be looked at.
         __atomic_store_n(&exclusive_addresses[processor_id], masked_address, __ATOMIC_RELAXED);
+        // Bumping the granule is what upstream did by clearing every other
+        // processor's slot for it, and it is the one part a compare-exchange
+        // cannot stand in for: two loads of a word are not exclusive, so the
+        // first reservation has to be stale by the time the second one exists.
+        exclusive_generations[processor_id] = MarkReservation(masked_address);
         const T value = op();
         std::memcpy(exclusive_values[processor_id].data(), &value, sizeof(T));
         return value;
@@ -49,18 +54,27 @@ public:
     /// specified region and, if it does, executes the operation.
     ///
     /// The store behind `op` is an atomic compare-exchange of the guest word
-    /// (the host's MemoryWriteExclusive* callbacks), so a reservation is lost
-    /// exactly when that word changed -- the condition the guest's lock-free
-    /// code depends on. Upstream walked every processor slot here and held a
-    /// process-wide spinlock around both this and ReadAndMark, so with dozens of
-    /// guest threads every atomic increment waited for every other thread's
-    /// atomics.
+    /// (the host's MemoryWriteExclusive* callbacks), so a store that changed the
+    /// word loses the reservation there. The per-granule generation closes the
+    /// two holes a compare-exchange cannot see: a word that another load has
+    /// taken a reservation on since, and a word that went through a write and
+    /// back to the value this processor read. On a reference count the second
+    /// one is a lost increment -- and a reference count that loses an increment
+    /// on a shared string is a use-after-free the guest then touches as text.
     template<typename T, typename Function>
     bool DoExclusiveOperation(size_t processor_id, VAddr address, Function op) {
         static_assert(std::is_trivially_copyable_v<T>);
         if (!CheckAndClear(processor_id, address)) {
             return false;
         }
+        const VAddr masked_address = address & RESERVATION_GRANULE_MASK;
+        if (GenerationChanged(masked_address, exclusive_generations[processor_id])) {
+            return false;
+        }
+        // Everything already reserved on this granule is stale from here on, no
+        // matter what the store writes: a later write that restores the old
+        // value must not let an older reservation through.
+        BumpGeneration(masked_address);
 
         T saved_value;
         std::memcpy(&saved_value, exclusive_values[processor_id].data(), sizeof(T));
@@ -75,6 +89,56 @@ public:
 private:
     bool CheckAndClear(size_t processor_id, VAddr address);
 
+    // A generation counter per reservation granule, hashed into a fixed table.
+    // Two things bump it: a reservation being taken (the load is not exclusive,
+    // so an older reservation of the same word is stale from then on) and an
+    // exclusive store being about to happen. A collision makes a reservation
+    // fail needlessly, which the architecture allows and the guest retries.
+    //
+    // The key is the word index plus one, so no address needs a "belongs to no
+    // one" special case.
+    static constexpr size_t GENERATION_SLOTS = 8192;
+
+    static size_t GenerationSlot(std::uint32_t key) {
+        return static_cast<size_t>((key * 2654435761u) >> 19);
+    }
+
+    static std::uint32_t GenerationKey(VAddr address) {
+        return static_cast<std::uint32_t>(address >> 2) + 1u;
+    }
+
+    std::uint32_t MarkReservation(VAddr address) {
+        const std::uint32_t key = GenerationKey(address);
+        const size_t slot = GenerationSlot(key);
+        if (__atomic_load_n(&generation_keys[slot], __ATOMIC_ACQUIRE) == key) {
+            // Someone is holding this word already: the count moves so that
+            // reservation can no longer complete.
+            __atomic_add_fetch(&generation_values[slot], 1u, __ATOMIC_ACQ_REL);
+        } else {
+            __atomic_store_n(&generation_keys[slot], key, __ATOMIC_RELEASE);
+        }
+        return __atomic_load_n(&generation_values[slot], __ATOMIC_ACQUIRE);
+    }
+
+    std::uint32_t BumpGeneration(VAddr address) {
+        const std::uint32_t key = GenerationKey(address);
+        const size_t slot = GenerationSlot(key);
+        __atomic_store_n(&generation_keys[slot], key, __ATOMIC_RELEASE);
+        // The count is never reset when the slot changes owner: a generation a
+        // guest recorded earlier must never come back, and a counter that
+        // restarted at zero would let exactly that happen.
+        return __atomic_add_fetch(&generation_values[slot], 1u, __ATOMIC_ACQ_REL);
+    }
+
+    bool GenerationChanged(VAddr address, std::uint32_t generation) const {
+        const std::uint32_t key = GenerationKey(address);
+        const size_t slot = GenerationSlot(key);
+        if (__atomic_load_n(&generation_keys[slot], __ATOMIC_ACQUIRE) != key) {
+            return true;
+        }
+        return __atomic_load_n(&generation_values[slot], __ATOMIC_ACQUIRE) != generation;
+    }
+
     void Lock();
     void Unlock();
 
@@ -88,6 +152,9 @@ private:
     SpinLock lock;
     std::vector<VAddr> exclusive_addresses;
     std::vector<Vector> exclusive_values;
+    std::vector<std::uint32_t> exclusive_generations;
+    std::array<std::uint32_t, GENERATION_SLOTS> generation_keys{};
+    std::array<std::uint32_t, GENERATION_SLOTS> generation_values{};
 };
 
 }  // namespace Dynarmic

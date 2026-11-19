@@ -128,6 +128,19 @@ LinkTarget ExclusiveWriteMemoryLinkTarget(size_t bitsize) {
     UNREACHABLE();
 }
 
+// AAPCS64 leaves the upper bits of a u8/u16 return value unspecified, so a
+// callback may hand back whatever the callee left in w0. The result is used as a
+// 32-bit value, so it has to be extended here: an LDRB whose callback returns the
+// address instead of the byte put that address into the guest register.
+template<size_t bitsize>
+void EmitZeroExtendCallbackResult(oaknut::CodeGenerator& code) {
+    if constexpr (bitsize == 8) {
+        code.UXTB(W0, W0);
+    } else if constexpr (bitsize == 16) {
+        code.UXTH(W0, W0);
+    }
+}
+
 template<size_t bitsize>
 void CallbackOnlyEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
@@ -151,6 +164,7 @@ void CallbackOnlyEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, I
         code.MOV(Q8.B16(), Q0.B16());
         ctx.reg_alloc.DefineAsRegister(inst, Q8);
     } else {
+        EmitZeroExtendCallbackResult<bitsize>(code);
         ctx.reg_alloc.DefineAsRegister(inst, X0);
     }
 }
@@ -177,6 +191,7 @@ void CallbackOnlyEmitExclusiveReadMemory(oaknut::CodeGenerator& code, EmitContex
         code.MOV(Q8.B16(), Q0.B16());
         ctx.reg_alloc.DefineAsRegister(inst, Q8);
     } else {
+        EmitZeroExtendCallbackResult<bitsize>(code);
         ctx.reg_alloc.DefineAsRegister(inst, X0);
     }
 }
@@ -453,6 +468,10 @@ void InlinePageTableEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx
         }
         if constexpr (bitsize == 128) {
             code.MOV(Rvalue.B16(), Q0.B16());
+        } else if constexpr (bitsize == 8) {
+            code.UXTB(Rvalue.toW(), Wscratch0);
+        } else if constexpr (bitsize == 16) {
+            code.UXTH(Rvalue.toW(), Wscratch0);
         } else {
             code.MOV(Rvalue.toX(), Xscratch0);
         }
@@ -582,6 +601,10 @@ void FastmemEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::In
         }
         if constexpr (bitsize == 128) {
             code.MOV(Rvalue.B16(), Q0.B16());
+        } else if constexpr (bitsize == 8) {
+            code.UXTB(Rvalue.toW(), Wscratch0);
+        } else if constexpr (bitsize == 16) {
+            code.UXTH(Rvalue.toW(), Wscratch0);
         } else {
             code.MOV(Rvalue.toX(), Xscratch0);
         }
