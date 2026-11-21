@@ -170,8 +170,13 @@ void EmitA32CheckMemoryAbort(oaknut::CodeGenerator& code, EmitContext& ctx, IR::
 
     const A32::LocationDescriptor current_location{IR::LocationDescriptor{inst->GetArg(0).GetU64()}};
 
-    code.LDAR(Xscratch0, Xhalt);
-    code.TST(Xscratch0, static_cast<u32>(HaltReason::MemoryAbort));
+    // halt_reason is a u32 member, and it sits at offset 4 mod 8 inside the Jit
+    // (an empty Backend::Arm64::A32Core comes right before it). A 64-bit LDAR of
+    // it is therefore an unaligned single-copy atomic load: cores that check
+    // alignment (Cortex-A78/A55) raise SIGBUS, and only implementations that
+    // silently split it (Oryon) keep going. Read the word the field is.
+    code.LDAR(Wscratch0, Xhalt);
+    code.TST(Wscratch0, static_cast<u32>(HaltReason::MemoryAbort));
     code.B(EQ, end);
     EmitSetUpperLocationDescriptor(code, ctx, current_location, ctx.block.Location());
     code.MOV(Wscratch0, current_location.PC());
