@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: 0BSD
  */
 
+#include <array>
+#include <optional>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "./testenv.h"
@@ -1059,3 +1062,53 @@ TEST_CASE("arm: vqdmlal.s16 (destination overlaps sources)", "[arm][A32]") {
     REQUIRE((jit.Fpscr() & (1 << 27)) == 0);  // FPSCR.QC
 }
 
+TEST_CASE("arm: vqrshl", "[arm][A32]") {
+    struct TestCase {
+        u32 instruction;
+        std::array<u32, 4> value;     // Vm: d2 (q1)
+        std::array<u32, 4> shift;     // Vn: d4 (q2)
+        std::array<u32, 4> expected;  // Vd: d0 (q0)
+        bool qc;
+    };
+
+    static const TestCase test_cases[] = {
+#include "./vqrshl.inc"
+    };
+
+    // The rows are grouped by instruction; one JIT runs every row of a group.
+    ArmTestEnv test_env;
+    std::optional<A32::Jit> jit;
+    u32 instruction = 0;
+
+    for (size_t index = 0; index < std::size(test_cases); index++) {
+        const TestCase& test_case = test_cases[index];
+        CAPTURE(index, test_case.instruction);
+
+        if (!jit || test_case.instruction != instruction) {
+            instruction = test_case.instruction;
+            test_env.code_mem = {
+                instruction,
+                0xeafffffe,  // b +#0
+            };
+            jit.emplace(GetUserConfig(&test_env));
+        }
+
+        for (size_t i = 0; i < 4; i++) {
+            jit->ExtRegs()[i] = 0xdeadbeef;
+            jit->ExtRegs()[4 + i] = test_case.value[i];
+            jit->ExtRegs()[8 + i] = test_case.shift[i];
+        }
+
+        jit->Regs()[15] = 0;
+        jit->SetCpsr(0x000001d0);  // User-mode
+        jit->SetFpscr(0x00000000);
+
+        test_env.ticks_left = 2;
+        jit->Run();
+
+        for (size_t i = 0; i < 4; i++) {
+            REQUIRE(jit->ExtRegs()[i] == test_case.expected[i]);
+        }
+        REQUIRE(((jit->Fpscr() >> 27) & 1) == (test_case.qc ? 1u : 0u));  // FPSCR.QC
+    }
+}
