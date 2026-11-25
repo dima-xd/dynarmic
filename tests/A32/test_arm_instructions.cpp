@@ -702,3 +702,360 @@ TEST_CASE("arm: tbx", "[arm][A32]") {
     REQUIRE(jit.ExtRegs()[19 * 2 + 0] == 0x05'02'01'00);
     REQUIRE(jit.ExtRegs()[19 * 2 + 1] == 0x20'1F'10'0F);
 }
+
+TEST_CASE("arm: vqdmlal.s16 (saturating, N.O.V.A. 3 audio biquad)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2908921,  // vqdmlal.s16 q4, d0, d17
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0x12348000;
+    jit.ExtRegs()[0 * 2 + 1] = 0xfffe7fff;
+    jit.ExtRegs()[8 * 2 + 0] = 0x00000001;
+    jit.ExtRegs()[8 * 2 + 1] = 0x7fffff00;
+    jit.ExtRegs()[9 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[9 * 2 + 1] = 0x00000010;
+    jit.ExtRegs()[17 * 2 + 0] = 0x01008000;
+    jit.ExtRegs()[17 * 2 + 1] = 0x00037fff;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0x7fffffff);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x7fffffff);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0xfffe0002);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x00000004);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlsl.s16 (saturating)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2908b21,  // vqdmlsl.s16 q4, d0, d17
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0x12348000;
+    jit.ExtRegs()[0 * 2 + 1] = 0xfffe7fff;
+    jit.ExtRegs()[8 * 2 + 0] = 0x00000001;
+    jit.ExtRegs()[8 * 2 + 1] = 0x7fffff00;
+    jit.ExtRegs()[9 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[9 * 2 + 1] = 0x00000010;
+    jit.ExtRegs()[17 * 2 + 0] = 0x01008000;
+    jit.ExtRegs()[17 * 2 + 1] = 0x00037fff;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0x80000002);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x7fdb9700);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0x80000000);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x0000001c);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlal.s16 (no saturation leaves QC clear)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2908921,  // vqdmlal.s16 q4, d0, d17
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0xff380064;
+    jit.ExtRegs()[0 * 2 + 1] = 0xfe70012c;
+    jit.ExtRegs()[8 * 2 + 0] = 0x000003e8;
+    jit.ExtRegs()[8 * 2 + 1] = 0x000007d0;
+    jit.ExtRegs()[9 * 2 + 0] = 0xfffff448;
+    jit.ExtRegs()[9 * 2 + 1] = 0x00000fa0;
+    jit.ExtRegs()[17 * 2 + 0] = 0x00080007;
+    jit.ExtRegs()[17 * 2 + 1] = 0x000afff7;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0x00000960);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0xfffffb50);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0xffffdf30);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0xfffff060);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == 0);  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlal.s32 (saturating)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2a08921,  // vqdmlal.s32 q4, d0, d17
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[0 * 2 + 1] = 0x00012345;
+    jit.ExtRegs()[8 * 2 + 0] = 0x00000005;
+    jit.ExtRegs()[8 * 2 + 1] = 0x00000000;
+    jit.ExtRegs()[9 * 2 + 0] = 0xfffff000;
+    jit.ExtRegs()[9 * 2 + 1] = 0x7fffffff;
+    jit.ExtRegs()[17 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[17 * 2 + 1] = 0x00000100;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0xffffffff);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x7fffffff);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0xffffffff);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x7fffffff);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlsl.s32 (saturating)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2a2ab03,  // vqdmlsl.s32 q5, d2, d3
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[2 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[2 * 2 + 1] = 0x00012345;
+    jit.ExtRegs()[3 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[3 * 2 + 1] = 0x00000100;
+    jit.ExtRegs()[10 * 2 + 0] = 0x00000003;
+    jit.ExtRegs()[10 * 2 + 1] = 0x80000000;
+    jit.ExtRegs()[11 * 2 + 0] = 0x00000007;
+    jit.ExtRegs()[11 * 2 + 1] = 0x00000000;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[20 + 0] == 0x00000000);
+    REQUIRE(jit.ExtRegs()[20 + 1] == 0x80000000);
+    REQUIRE(jit.ExtRegs()[20 + 2] == 0xfdb97607);
+    REQUIRE(jit.ExtRegs()[20 + 3] == 0xffffffff);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmull.s16", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2908d21,  // vqdmull.s16 q4, d0, d17
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0x12348000;
+    jit.ExtRegs()[0 * 2 + 1] = 0xfffe7fff;
+    jit.ExtRegs()[8 * 2 + 0] = 0xdeadbeef;
+    jit.ExtRegs()[8 * 2 + 1] = 0xdeadbeef;
+    jit.ExtRegs()[9 * 2 + 0] = 0xdeadbeef;
+    jit.ExtRegs()[9 * 2 + 1] = 0xdeadbeef;
+    jit.ExtRegs()[17 * 2 + 0] = 0x01008000;
+    jit.ExtRegs()[17 * 2 + 1] = 0x00037fff;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0x7fffffff);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x00246800);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0x7ffe0002);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0xfffffff4);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmull.s32", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2a08d21,  // vqdmull.s32 q4, d0, d17
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[0 * 2 + 1] = 0x00012345;
+    jit.ExtRegs()[8 * 2 + 0] = 0x00000000;
+    jit.ExtRegs()[8 * 2 + 1] = 0x00000000;
+    jit.ExtRegs()[9 * 2 + 0] = 0x00000000;
+    jit.ExtRegs()[9 * 2 + 1] = 0x00000000;
+    jit.ExtRegs()[17 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[17 * 2 + 1] = 0x00000100;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0xffffffff);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x7fffffff);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0x02468a00);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x00000000);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlal.s16 (by scalar)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf290834f,  // vqdmlal.s16 q4, d0, d7[1]
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0x12348000;
+    jit.ExtRegs()[0 * 2 + 1] = 0xfffe7fff;
+    jit.ExtRegs()[7 * 2 + 0] = 0x8000000b;
+    jit.ExtRegs()[7 * 2 + 1] = 0x0019000d;
+    jit.ExtRegs()[8 * 2 + 0] = 0x00000001;
+    jit.ExtRegs()[8 * 2 + 1] = 0x7fffff00;
+    jit.ExtRegs()[9 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[9 * 2 + 1] = 0x00000010;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0x7fffffff);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x6dcbff00);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0x80000000);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x00020010);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlsl.s16 (by scalar)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf290876f,  // vqdmlsl.s16 q4, d0, d7[3]
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0xff380064;
+    jit.ExtRegs()[0 * 2 + 1] = 0xfe70012c;
+    jit.ExtRegs()[7 * 2 + 0] = 0x8000000b;
+    jit.ExtRegs()[7 * 2 + 1] = 0x0019000d;
+    jit.ExtRegs()[8 * 2 + 0] = 0x000003e8;
+    jit.ExtRegs()[8 * 2 + 1] = 0x000007d0;
+    jit.ExtRegs()[9 * 2 + 0] = 0xfffff448;
+    jit.ExtRegs()[9 * 2 + 1] = 0x00000fa0;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0xfffff060);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x00002ee0);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0xffffb9b0);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x00005dc0);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == 0);  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlal.s32 (by scalar)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2a0836f,  // vqdmlal.s32 q4, d0, d15[1]
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[0 * 2 + 1] = 0x00012345;
+    jit.ExtRegs()[8 * 2 + 0] = 0x00000005;
+    jit.ExtRegs()[8 * 2 + 1] = 0x00000000;
+    jit.ExtRegs()[9 * 2 + 0] = 0xfffff000;
+    jit.ExtRegs()[9 * 2 + 1] = 0x7fffffff;
+    jit.ExtRegs()[15 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[15 * 2 + 1] = 0x7fffffff;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0x00000005);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x80000001);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0xffffffff);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x7fffffff);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlsl.s32 (by scalar)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2a0874f,  // vqdmlsl.s32 q4, d0, d15[0]
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[0 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[0 * 2 + 1] = 0x00012345;
+    jit.ExtRegs()[8 * 2 + 0] = 0x00000005;
+    jit.ExtRegs()[8 * 2 + 1] = 0x00000000;
+    jit.ExtRegs()[9 * 2 + 0] = 0xfffff000;
+    jit.ExtRegs()[9 * 2 + 1] = 0x7fffffff;
+    jit.ExtRegs()[15 * 2 + 0] = 0x80000000;
+    jit.ExtRegs()[15 * 2 + 1] = 0x7fffffff;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0x00000006);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0x80000000);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0xffffffff);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x7fffffff);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == (1 << 27));  // FPSCR.QC
+}
+
+TEST_CASE("arm: vqdmlal.s16 (destination overlaps sources)", "[arm][A32]") {
+    ArmTestEnv test_env;
+    A32::Jit jit{GetUserConfig(&test_env)};
+    test_env.code_mem = {
+        0xf2988909,  // vqdmlal.s16 q4, d8, d9
+        0xeafffffe,  // b +#0
+    };
+
+    jit.ExtRegs()[8 * 2 + 0] = 0xff380064;
+    jit.ExtRegs()[8 * 2 + 1] = 0xfe70012c;
+    jit.ExtRegs()[9 * 2 + 0] = 0x00080007;
+    jit.ExtRegs()[9 * 2 + 1] = 0x000afff7;
+
+    jit.SetCpsr(0x000001d0);  // User-mode
+    jit.SetFpscr(0x00000000);
+
+    test_env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.ExtRegs()[16 + 0] == 0xff3805dc);
+    REQUIRE(jit.ExtRegs()[16 + 1] == 0xfe6ff4ac);
+    REQUIRE(jit.ExtRegs()[16 + 2] == 0x0007eaef);
+    REQUIRE(jit.ExtRegs()[16 + 3] == 0x000ae0b7);
+    REQUIRE((jit.Fpscr() & (1 << 27)) == 0);  // FPSCR.QC
+}
+
