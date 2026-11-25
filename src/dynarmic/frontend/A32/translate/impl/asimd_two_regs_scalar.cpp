@@ -147,6 +147,31 @@ bool TranslatorVisitor::asimd_VMLAL_scalar(bool U, bool D, size_t sz, size_t Vn,
     return ScalarMultiplyLong(*this, U, D, sz, Vn, Vd, N, M, Vm, behavior);
 }
 
+bool TranslatorVisitor::asimd_VQDMLAL_scalar(bool D, size_t sz, size_t Vn, size_t Vd, bool op, bool N, bool M, size_t Vm) {
+    if (sz == 0b11) {
+        return DecodeError();
+    }
+
+    if (sz == 0b00 || mcl::bit::get_bit<0>(Vd)) {
+        return UndefinedInstruction();
+    }
+
+    const size_t esize = 8U << sz;
+    const auto d = ToVector(true, Vd, D);
+    const auto n = ToVector(false, Vn, N);
+    const auto [m, index] = GetScalarLocation(esize, M, Vm);
+
+    const auto reg_d = ir.GetVector(d);
+    const auto reg_n = ir.GetVector(n);
+    const auto reg_m = ir.VectorBroadcastElement(esize, ir.GetVector(m), index);
+    const auto product = ir.VectorSignedSaturatedDoublingMultiplyLong(esize, reg_n, reg_m);
+    const auto result = op ? ir.VectorSignedSaturatedSub(esize * 2, reg_d, product)
+                           : ir.VectorSignedSaturatedAdd(esize * 2, reg_d, product);
+
+    ir.SetVector(d, result);
+    return true;
+}
+
 bool TranslatorVisitor::asimd_VMUL_scalar(bool Q, bool D, size_t sz, size_t Vn, size_t Vd, bool F, bool N, bool M, size_t Vm) {
     return ScalarMultiply(*this, Q, D, sz, Vn, Vd, F, N, M, Vm, MultiplyBehavior::Multiply);
 }
