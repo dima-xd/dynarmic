@@ -362,7 +362,12 @@ void A32AddressSpace::EmitPrelude() {
 
     prelude_info.end_of_prelude = code.offset();
 
-    mem.invalidate_all();
+    // Only the bytes the prelude wrote can be in the instruction cache under
+    // an address the host has not fetched yet; invalidating the whole block
+    // walks every line of a 128 MiB reservation (two million of them) to flush
+    // a few KiB of code, and that ran on the thread that had just asked for a
+    // Jit: measured 8-13 ms per machine at 128 MiB and 1-2 ms at 16 MiB.
+    mem.invalidate(mem.ptr(), code.offset());
     ProtectCodeMemory();
 }
 
